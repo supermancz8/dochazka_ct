@@ -168,8 +168,6 @@ if not df_dochazka.empty:
 else:
     st.info("Žádné záznamy k zobrazení statistik.")
 
----
-
 # --- PANEL PŘEHLEDU ZÁZNAMŮ (Upraveno pro filtrování) ---
 st.subheader("📊 Přehled záznamů")
 

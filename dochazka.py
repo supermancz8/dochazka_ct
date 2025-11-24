@@ -5,32 +5,38 @@ import os
 import pytz
 
 # --- KONFIGURACE DAT ---
-# Místo pro uložení dat v CSV souboru
 DATA_FILE = 'dochazka_data.csv'
-# Diety platné pro rok 2025 (příklad - zadej aktuální hodnoty)
 DIET_RATES = {
-    '5_12': 166,  # 5 až 12 hodin
-    '12_18': 256, # 12 až 18 hodin
-    '18+': 398    # Nad 18 hodin
+    '5_12': 166,
+    '12_18': 256,
+    '18+': 398
 }
 # --- Konec konfigurace ---
-
 
 # Funkce pro načtení a uložení dat
 def load_data():
     """Načte data z CSV, nebo vytvoří prázdný DataFrame, pokud soubor neexistuje."""
     if os.path.exists(DATA_FILE):
-        # Indexování se nastaví na False, aby Streamlit neměl problémy s indexem
-        return pd.read_csv(DATA_FILE)
+        df = pd.read_csv(DATA_FILE)
+        # Zajištění, že sloupec Datum je správného typu, i po načtení
+        df['Datum'] = pd.to_datetime(df['Datum'], format='%d.%m.%Y')
+        return df
     else:
-        # Vytvoření prázdného DataFrame pro uchování dat
         return pd.DataFrame(columns=['id', 'Datum', 'Od', 'Do', 'Odpracováno (h)', 'Doprava', 'Diety (Kč)'])
 
 def save_data(df):
     """Uloží DataFrame do CSV souboru."""
-    df.to_csv(DATA_FILE, index=False)
+    # Před uložením převedeme Datum zpět na formát řetězce (pro snadné čtení v Excelu/manuálně)
+    df['Datum_str'] = df['Datum'].dt.strftime('%d.%m.%Y')
+    df_to_save = df.drop(columns=['Datum'])
+    df_to_save.rename(columns={'Datum_str': 'Datum'}, inplace=True)
     
-# Výpočet diářů
+    # Zajištění správného pořadí sloupců před uložením
+    cols = ['id', 'Datum', 'Od', 'Do', 'Odpracováno (h)', 'Doprava', 'Diety (Kč)']
+    df_to_save = df_to_save[cols]
+    
+    df_to_save.to_csv(DATA_FILE, index=False)
+    
 def calculate_diet(duration_hours, has_diet):
     """Vypočítá výši diet podle odpracovaných hodin."""
     if not has_diet:
@@ -56,10 +62,8 @@ df_dochazka = load_data()
 
 
 # --- HLAVA (Header) A STYL ---
-# Vložení custom CSS pro stejný vzhled jako v tvém HTML
 st.markdown("""
 <style>
-/* Zde je tvoje vlastní CSS, aby to vypadalo jako HTML verze */
 .header-container {
     background: #0033A0;
     padding: 20px;
@@ -78,9 +82,6 @@ st.markdown("""
     margin-top: 5px;
     opacity: 0.9;
 }
-.stActionButton {
-    display: none; /* Skryje defaultní hamburger menu Streamlitu pro čistší mobilní vzhled */
-}
 </style>
 """, unsafe_allow_html=True)
 
@@ -89,12 +90,10 @@ st.markdown('<div class="header-container"><h1>Evidence docházky ČT</h1><p>Ví
 # --- PANEL PRO PŘIDÁNÍ ZÁZNAMU ---
 st.subheader("➕ Nový záznam")
 
-# Automatické nastavení data a času pro ČR
 tz = pytz.timezone('Europe/Prague')
 now = datetime.datetime.now(tz)
 
 with st.form("new_record_form", clear_on_submit=True):
-    # Data a časové sloupce
     col1, col2 = st.columns(2)
     with col1:
         date_input = st.date_input("Datum", value=now.date())
@@ -102,7 +101,6 @@ with st.form("new_record_form", clear_on_submit=True):
         time_od = st.time_input("Plánovaný čas OD", value=datetime.time(8, 0))
         time_do = st.time_input("Plánovaný čas DO", value=datetime.time(16, 0))
     
-    # Odpracované hodiny a doprava
     odpracovano = st.number_input("Odpracovaný čas (hodiny)", min_value=0.0, max_value=24.0, value=8.0, step=0.5)
     doprava = st.selectbox("Dopravní prostředek", ["Žádný", "Auto", "Dodávka"])
     diety_checkbox = st.checkbox("Nárok na diety")
@@ -110,31 +108,25 @@ with st.form("new_record_form", clear_on_submit=True):
     submitted = st.form_submit_button("💾 Uložit záznam")
 
     if submitted:
-        # Vytvoření datetime objektů pro výpočet délky
         dt_od = datetime.datetime.combine(date_input, time_od)
         dt_do = datetime.datetime.combine(date_input, time_do)
         
-        # Ošetření přechodu přes půlnoc
         if dt_do < dt_od:
             dt_do += datetime.timedelta(days=1)
         
-        duration = dt_do - dt_od
-        duration_hours = duration.total_seconds() / 3600
+        duration_hours = (dt_do - dt_od).total_seconds() / 3600
         
-        # Validace
         if odpracovano > duration_hours:
             st.error("Odpracovaný čas nemůže být delší než plánovaný časový úsek!")
         elif duration_hours <= 0:
             st.error("Čas DO musí být po čase OD.")
         else:
-            # Výpočet diet
             dieta_hodnota = calculate_diet(duration_hours, diety_checkbox)
             
-            # Nový záznam
             new_id = datetime.datetime.now().timestamp()
             new_record = pd.DataFrame([{
                 'id': new_id,
-                'Datum': date_input.strftime("%d.%m.%Y"),
+                'Datum': date_input, # Uložíme jako datetime objekt
                 'Od': time_od.strftime("%H:%M"),
                 'Do': time_do.strftime("%H:%M"),
                 'Odpracováno (h)': odpracovano,
@@ -150,15 +142,13 @@ with st.form("new_record_form", clear_on_submit=True):
 
 # --- PANEL STATISTIK ---
 st.subheader("📈 Statistiky")
-
+# ... (kód statistik zůstává stejný, pracuje s df_dochazka)
 if not df_dochazka.empty:
-    # Agregace dat
     total_hours = df_dochazka['Odpracováno (h)'].sum()
     total_diets = df_dochazka['Diety (Kč)'].sum()
     count_auto = df_dochazka[df_dochazka['Doprava'] == 'Auto'].shape[0]
     count_dodavka = df_dochazka[df_dochazka['Doprava'] == 'Dodávka'].shape[0]
     
-    # Převod hodin na dny/hodiny (8h pracovní den)
     days = int(total_hours // 8)
     remaining_hours = round(total_hours % 8, 1)
     
@@ -167,10 +157,9 @@ if not df_dochazka.empty:
     elif days > 0:
         formatted_hours = f"{days} dní"
     else:
-        formatted_hours = f"{remaining_hours} h"
+        formatted_hours = f"{total_hours:.1f} h" if total_hours > 0 else "0 h"
         
     
-    # Zobrazení ve sloupcích
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Odpracováno celkem", formatted_hours)
     col2.metric("Celkem diety", f"{total_diets} Kč")
@@ -179,40 +168,78 @@ if not df_dochazka.empty:
 else:
     st.info("Žádné záznamy k zobrazení statistik.")
 
+---
 
-# --- PANEL PŘEHLEDU ZÁZNAMŮ ---
+# --- PANEL PŘEHLEDU ZÁZNAMŮ (Upraveno pro filtrování) ---
 st.subheader("📊 Přehled záznamů")
 
 if not df_dochazka.empty:
-    # Přidání sloupců pro mazání
-    df_display = df_dochazka.copy()
     
-    # Funkce pro mazání řádku (používá session_state pro Streamlit)
-    def delete_record(record_id):
-        global df_dochazka
-        df_dochazka = df_dochazka[df_dochazka['id'] != record_id]
-        save_data(df_dochazka)
-        st.experimental_rerun() # nutné pro okamžitou aktualizaci tabulky
-
-    # Vytvoření akčních tlačítek
-    edit_column = st.empty()
+    # 1. Vytvoření seznamu dostupných měsíců a let (pro selectbox)
+    # Získáme unikátní kombinace Rok-Měsíc ve formátu "MMMM RRRR"
+    df_dochazka['RokMěsíc'] = df_dochazka['Datum'].dt.strftime('%B %Y')
     
-    # Zobrazení dat
-    st.dataframe(df_dochazka.drop(columns=['id']), use_container_width=True)
+    # Převedeme na český název měsíce (vyžaduje Python 3.9+ a správné locale, ale na Streamlit Cloud to obvykle funguje)
+    # Pro jistotu použijeme anglické názvy, pokud by české nefungovaly, a přidáme rok.
+    # Budeme se držet Rok/Měsíc pro jednoduché řazení
+    df_dochazka['Měsíc_ID'] = df_dochazka['Datum'].dt.strftime('%Y-%m')
     
-    # Tlačítka pro mazání jednotlivých řádků
-    for index, row in df_dochazka.iterrows():
-        # Streamlit bohužel nemá nativní tlačítka v řádku tabulky, 
-        # proto se obvykle používá boční panel nebo checkbox pro výběr a následné mazání.
-        # Pro zjednodušení použijeme zatím jen možnost smazat vše.
-        pass
+    # Vytvoření seznamu unikátních měsíců a seřazení
+    unique_months = df_dochazka[['Měsíc_ID', 'RokMěsíc']].drop_duplicates().sort_values(by='Měsíc_ID', ascending=False)
+    
+    # Vytvoření čitelného popisku pro výběr
+    month_options = [f"{datetime.datetime.strptime(mid, '%Y-%m').strftime('%B')} {mid[:4]}" for mid in unique_months['Měsíc_ID']]
+    month_keys = unique_months['Měsíc_ID'].tolist()
+    
+    # 2. Výběr měsíce pro filtrování
+    selected_month_label = st.selectbox(
+        "Zobrazit záznamy za:",
+        options=month_options,
+        index=0 # Defaultně vybraný nejnovější měsíc
+    )
+    
+    # Získání Měsíc_ID z vybrané čitelné labelu
+    selected_index = month_options.index(selected_month_label)
+    selected_month_id = month_keys[selected_index]
+    
+    # 3. Filtrování tabulky
+    df_filtered = df_dochazka[df_dochazka['Měsíc_ID'] == selected_month_id].copy()
+    
+    # Příprava tabulky pro zobrazení
+    df_display = df_filtered.copy()
+    
+    # Odstranění pomocných sloupců a úprava formátu data
+    df_display['Datum'] = df_display['Datum'].dt.strftime('%d.%m.%Y')
+    df_display.drop(columns=['id', 'Měsíc_ID', 'RokMěsíc'], inplace=True)
+    
+    # Přejmenování sloupců pro lepší čitelnost
+    df_display.rename(columns={'Odpracováno (h)': 'Hodin', 'Diety (Kč)': 'Diety'}, inplace=True)
+    
+    # Zobrazení nadpisu pro filtrovaný měsíc
+    st.markdown(f"**Detailní přehled za {selected_month_label}:**")
+    
+    # 4. Zobrazení tabulky
+    if not df_display.empty:
+        st.dataframe(df_display, use_container_width=True)
+        
+        # --- Měsíční souhrn ---
+        st.markdown(f"#### Souhrn za {selected_month_label}")
+        mesic_hodin = df_filtered['Odpracováno (h)'].sum()
+        mesic_diety = df_filtered['Diety (Kč)'].sum()
+        
+        col_m1, col_m2 = st.columns(2)
+        col_m1.metric("Celkem odpracováno (h)", f"{mesic_hodin:.1f}")
+        col_m2.metric("Celkem diety (Kč)", f"{mesic_diety} Kč")
 
     # Tlačítko pro smazání všech záznamů
     if st.button("🗑️ Smazat VŠECHNY záznamy", type="primary"):
-        if st.warning("Opravdu chcete smazat VŠECHNY záznamy? Tuto akci nelze vrátit!", icon="🚨"):
-            if st.button("ANO, smazat vše", type="secondary"):
+        st.warning("Opravdu chcete smazat VŠECHNY záznamy? Tuto akci nelze vrátit!", icon="🚨")
+        if st.button("ANO, smazat vše", type="secondary"):
+            if os.path.exists(DATA_FILE):
                 os.remove(DATA_FILE)
                 st.success("Všechny záznamy byly smazány.")
                 st.experimental_rerun()
+            else:
+                st.error("Soubor s daty nebyl nalezen.")
 else:
     st.info("Žádné záznamy k zobrazení.")
